@@ -5,6 +5,7 @@
 -- examples of DFAs and prove their correctness (or attempt to).
 
 import Mathlib.Data.Finset.Basic
+import Mathlib.Data.Finset.Card
 
 namespace DFA_Impl
 -- Define a DFA  as a structure with five
@@ -124,25 +125,20 @@ end DFA_Impl
 
 namespace TwoWayDFA_Impl
 
--- First define the direction the head can move
+-- We start by defining directions
 inductive Direction where
   | Left : Direction
   | Right : Direction
 deriving DecidableEq
 
--- For a given alphabet A, we extend it with endmarkers
+-- For a given alphabet A, the tape alphabet includes A plus two special booleans for endmarkers.
 def TapeAlphabet (A : Type) := A ⊕ Bool
--- Left endmarker is (Sum.inr true)
--- Right endmarker is (Sum.inr false)
--- Regular symbols are (Sum.inl a) for a : A
 
--- Define a 2-way DFA as a structure with seven fields:
--- Q - Finite, nonempty set of states
--- A - Finite, nonempty set of alphabet symbols
--- δ : Q × (A ⊕ Bool) → Q × Direction - Transition function
--- q₀ ∈ Q - Start state
--- qaccept ∈ Q - Accepting state
--- qreject ∈ Q - Rejecting state
+-- Special symbols for endmarkers
+def LE {A} : TapeAlphabet A := Sum.inr true
+def RE {A} : TapeAlphabet A := Sum.inr false
+
+-- A 2DFA structure as described:
 structure TwoWayDFA
   (Q : Type) [DecidableEq Q] [Nonempty Q]
   (A : Type) [Nonempty A] where
@@ -153,316 +149,130 @@ structure TwoWayDFA
   qaccept : Q
   qreject : Q
 
-def isHaltState_dec {}
+namespace TwoWayDFA -- O1 CODE BELOW
 
--- Define when a transition function is valid:
--- 1. Must move right on left endmarker
--- 2. Must move left on right endmarker
--- 3. Accept/reject states must move right on non-endmarker symbols
-def ValidTransition {Q A} [DecidableEq Q] (q : Q) (a : TapeAlphabet A)
-                         (delta : Q → TapeAlphabet A → Q × Direction)
-                         (qaccept : Q) (qreject : Q) : Prop :=
+variables {Q A : Type} [DecidableEq Q] [Nonempty Q] [Nonempty A]
 
-  match a with
-  | Sum.inr true => (delta q a).2 = Direction.Right    -- Left endmarker case
-  | Sum.inr false => (delta q a).2 = Direction.Left    -- Right endmarker case
-  | Sum.inl _ =>
-  if q = qaccept ∨ q = qreject
-  then (delta q a).2 = Direction.Right
-  else true
+-- Well-formedness conditions capturing the requirements:
+-- For all states q, δ(q, LE) moves right and δ(q, RE) moves left.
+-- For all b in Σ ∪ {LE}, δ(t, b) = (t, R) and δ(r, b) = (r, R).
+-- For δ(t, RE) = (t, L) and δ(r, RE) = (r, L).
+def WellFormed (M : TwoWayDFA Q A) : Prop :=
+  (∀ q, (M.delta q LE).snd = Direction.Right) ∧
+  (∀ q, (M.delta q RE).snd = Direction.Left) ∧
+  (∀ b, (b = LE ∨ ∃ a : A, b = Sum.inl a) →
+    M.delta M.qaccept b = (M.qaccept, Direction.Right) ∧
+    M.delta M.qreject b = (M.qreject, Direction.Right)) ∧
+  (M.delta M.qaccept RE = (M.qaccept, Direction.Left) ∧
+   M.delta M.qreject RE = (M.qreject, Direction.Left))
 
--- Construct a 2-way DFA from given parameters
-def TwoWayDFA.mkTwoWayDFA {Q} [DecidableEq Q] [Nonempty Q]
-                          {A} [Nonempty A]
-                          (states: Finset Q)
-                          (sigma: Finset A)
-                          (delta: Q → TapeAlphabet A → Q × Direction)
-                          (q₀: Q)
-                          (qaccept: Q)
-                          (qreject: Q)
-                          (h: ∀ q a, ValidTransition q a delta qaccept qreject) : TwoWayDFA Q A :=
-  { states := states
-  , sigma := sigma
-  , delta := delta
-  , q₀ := q₀
-  , qaccept := qaccept
-  , qreject := qreject }
+-- Extend the input x with endmarkers: x : List A
+def extendInput (x : List A) : List (TapeAlphabet A) :=
+  LE :: (x.map Sum.inl) ++ [RE]
 
+-- A configuration is a pair (q, i) with q in Q and i indexing into [0..(n+1)]
+structure Configuration (Q A : Type) [DecidableEq Q] [Nonempty Q] [Nonempty A] where
+  q : Q
+  i : Nat
 
+-- The one-step transition relation (1−→ₓ):
+-- (p, i) 1−→ₓ (q, j) if δ(p, tape[i]) = (q, D) and j = i+1 if D=R, j = i-1 if D=L
+def stepRel (M : TwoWayDFA Q A) (x : List A) (c1 c2 : Configuration Q A) : Prop :=
+  let tape := extendInput x
+  if c1.i < tape.length ∧ c2.i < tape.length then
+    match tape.get? c1.i with
+    | none => False
+    | some sym =>
+      let (q', dir) := M.delta c1.q sym
+      c2.q = q' ∧
+      (dir = Direction.Right ∧ c2.i = c1.i + 1 ∨ dir = Direction.Left ∧ c2.i = c1.i - 1)
+  else
+    False
 
--- Configuration represents the current state of computation
-structure Configuration (Q A : Type) where
-  state : Q
-  input : List (TapeAlphabet A)
-  position : Nat
+-- Define n−→ₓ by induction on n
+inductive nStepRel (M : TwoWayDFA Q A) (x : List A) : Nat → Configuration Q A → Configuration Q A → Prop
+| zero {c} : nStepRel M x 0 c c
+| succ {c1 c2 c3 n} :
+    nStepRel M x n c1 c2 → stepRel M x c2 c3 →
+    nStepRel M x (n+1) c1 c3
 
--- Step function computes the next configuration if possible
-def TwoWayDFA.step {Q} [DecidableEq Q] [Nonempty Q]
-                   {A} [Nonempty A]
-                   (dfa : TwoWayDFA Q A)
-                   (config : Configuration Q A) : Option (Configuration Q A) :=
-  match config.input.get? config.position with
-  | none => none  -- Invalid position
-  | some symbol =>
-      let (next_state, dir) := dfa.delta config.state symbol
-      some ⟨next_state,
-            config.input,
-            match dir with
-            | Direction.Left =>
-                if config.position = 0
-                then 0
-                else config.position - 1
-            | Direction.Right =>
-                min (config.position + 1) (config.input.length - 1)⟩
+-- The *−→ₓ relation: (p, i)*−→ₓ(q, j) if ∃ n, (p, i) n−→ₓ (q, j)
+def starRel (M : TwoWayDFA Q A) (x : List A) (c1 c2 : Configuration Q A) : Prop :=
+  ∃ n, nStepRel M x n c1 c2
 
--- Run the 2-way DFA for n steps
-def TwoWayDFA.run {Q} [DecidableEq Q] [Nonempty Q]
-                  {A} [Nonempty A]
-                  (dfa : TwoWayDFA Q A)
-                  (input : List A)
-                  (n : Nat) : Option Q :=
-  let init_config := Configuration.mk
-    dfa.q₀
-    ((Sum.inr true) :: (input.map Sum.inl) ++ [Sum.inr false])
-    0
-  match Nat.iterate n (λ c => c.bind (dfa.step)) (some init_config) with
-  | none => none
-  | some config => some config.state
+-- Acceptance: M accepts x if (s,0)*−→ₓ(qaccept, i) for some i
+def accepts (M : TwoWayDFA Q A) (x : List A) : Prop :=
+  let tape := extendInput x
+  ∃ i < tape.length, starRel M x ⟨M.q₀, 0⟩ ⟨M.qaccept, i⟩
 
--- A 2-way DFA accepts if it reaches the accepting state
-def TwoWayDFA.accepts {Q} [DecidableEq Q] [Nonempty Q]
-                      {A} [Nonempty A]
-                      (dfa : TwoWayDFA Q A)
-                      (input : List A) : Bool :=
-  ∃ n, (dfa.run input n) = some dfa.qaccept
+-- Rejection: M rejects x if (s,0)*−→ₓ(qreject, i) for some i
+def rejects (M : TwoWayDFA Q A) (x : List A) : Prop :=
+  let tape := extendInput x
+  ∃ i < tape.length, starRel M x ⟨M.q₀, 0⟩ ⟨M.qreject, i⟩
 
--- A 2-way DFA rejects if it reaches the rejecting state
-def TwoWayDFA.rejects {Q} [DecidableEq Q] [Nonempty Q]
-                      {A} [Nonempty A]
-                      (dfa : TwoWayDFA Q A)
-                      (input : List A) : Bool :=
-  ∃ n, (dfa.run input n) = some dfa.qreject
+-- The language L(M) accepted by M:
+def L (M : TwoWayDFA Q A) : Set (List A) := { x | M.accepts x }
 
-end TwoWayDFA_Impl
+-- M loops on x if it neither accepts nor rejects x.
+def loops (M : TwoWayDFA Q A) (x : List A) : Prop :=
+  ¬ M.accepts x ∧ ¬ M.rejects x
 
--- namespace TwoWayDFA_Impl
+-- Extended structure with well-formedness and distinctness conditions
+structure TwoWayDFAWithWF
+  (Q : Type) [DecidableEq Q] [Nonempty Q]
+  (A : Type) [Nonempty A] extends TwoWayDFA Q A where
+  h_wf : TwoWayDFA.WellFormed toTwoWayDFA
+  h_distinct : qreject ≠ qaccept
 
--- -- First, let's define the direction the head can move
--- inductive Direction
--- | Left : Direction  -- Move left (-1)
--- | Right : Direction -- Move right (+1)
+-- Now we define the 'run' function.
+-- The run function attempts to simulate the machine:
+-- It returns:
+--   Some true if M accepts x
+--   Some false if M rejects x
+--   None if it loops on x
+def run (M : TwoWayDFAWithWF Q A) (x : List A) : Option Bool :=
+  let tape := extendInput x
 
--- -- We'll create a type for our tape alphabet which includes the endmarkers
--- structure TapeAlphabet (S : Type) :=
--- (symbols : S)                    -- The input alphabet
--- (left_end : S)                   -- Left endmarker ⊢
--- (right_end : S)                  -- Right endmarker ⊣
+  -- Because Q is finite and tape length is finite, we can detect loops by checking
+  -- whether a configuration repeats.
+  let rec loop (visited : Finset (Q × Nat)) (c : Configuration Q A) : Option Bool :=
+    if c.q = M.qaccept then
+      -- Accept
+      some true
+    else if c.q = M.qreject then
+      -- Reject
+      some false
+    else if (c.q, c.i) ∈ visited then
+      -- We've seen this configuration before -> loop detected
+      none
+    else
+      match tape.get? c.i with
+      | none =>
+        -- This should not happen if c.i is in range.
+        none
+      | some sym =>
+        let (q', dir) := M.delta c.q sym
+        let i' := if dir = Direction.Right then c.i + 1 else c.i - 1
+        if h : i' < tape.length then
+          loop (visited ∪ {(c.q, c.i)}) { q := q', i := i' }
+        else
+          -- Should not occur in a well-formed 2DFA, but we handle it gracefully.
+          none
+  -- Provide a termination measure:
+  -- Each recursive call adds a new configuration to visited, so visited.card increases.
+  -- Thus N - visited.card decreases strictly.
+  termination_by (M.states.card * tape.length) - visited.card
+  decreasing_by
+    -- In each recursive call, we do `visited ∪ (c.q, c.i)`.
+    -- The cardinality of visited after insertion is visited.card + 1 if (c.q, c.i) was not already in visited.
+    -- Thus N - visited.card decreases by 1.
+    apply Nat.lt_of_le_of_lt (Nat.le_refl _)
+    -- In previous calls visited.card < N because once visited.card = N we would have covered all configurations.
+    -- Thus visited.card < N.
 
--- -- Now we'll define the structure of a 2-way DFA
--- structure TwoWayDFA (Q S : Type) :=
--- (states : Q)                     -- Set of states
--- (alphabet : TapeAlphabet S)      -- Tape alphabet (including endmarkers)
--- (initial : Q)                    -- Initial state
--- (accept : Q)                     -- Accepting state
--- (reject : Q)                     -- Rejecting state
--- (transition : Q × S → Q × Direction)  -- Transition function δ
+    sorry -- For a full proof, you'd show that the number of visited configurations is always strictly less than N before recursion.
 
--- -- Let's define the constraints on the transition function
--- def valid_transition {Q S : Type} (M : TwoWayDFA Q S) : Prop :=
--- -- For all states x, when reading left_end, must move right
--- ∀ x : Q, (M.transition (x, M.alphabet.left_end)).2 = Direction.Right ∧
--- -- For all states x, when reading right_end, must move left
--- ∀ x : Q, (M.transition (x, M.alphabet.right_end)).2 = Direction.Left ∧
--- -- For accepting and rejecting states, must move right on non-endmarker symbols
--- ∀ σ : S, σ ≠ M.alphabet.left_end → σ ≠ M.alphabet.right_end →
---   (M.transition (M.accept, σ)).2 = Direction.Right ∧
---   (M.transition (M.reject, σ)).2 = Direction.Right
-
--- -- A configuration represents the current state of computation
--- structure Configuration (Q S : Type) :=
--- (state : Q)           -- Current state
--- (input : List S)      -- Input string (including endmarkers)
--- (position : ℕ)        -- Current head position (0-based index)
-
--- -- Step function computes the next configuration
--- def step {Q S : Type} (M : TwoWayDFA Q S) (c : Configuration Q S) : Configuration Q S :=
--- let (next_state, dir) := M.transition (c.state, c.input.nth c.position) in
--- Configuration.mk
---   next_state
---   c.input
---   (match dir with
---    | Direction.Left => c.position - 1
---    | Direction.Right => c.position + 1)
-
--- -- Define when a computation accepts
--- def accepts {Q S : Type} (M : TwoWayDFA Q S) (input : List S) : Prop :=
--- ∃ (n : ℕ),
---   let init_config := Configuration.mk M.initial (M.alphabet.left_end :: input ++ [M.alphabet.right_end]) 0 in
---   (iterate n (step M) init_config).state = M.accept
-
--- -- Define when a computation rejects
--- def rejects {Q S : Type} (M : TwoWayDFA Q S) (input : List S) : Prop :=
--- ∃ (n : ℕ),
---   let init_config := Configuration.mk M.initial (M.alphabet.left_end :: input ++ [M.alphabet.right_end]) 0 in
---   (iterate n (step M) init_config).state = M.reject
-
--- end TwoWayDFA_Impl
+  loop ∅ {q := M.q₀, i := 0}
 
 
--- Extension to the Project:
--- Consider the 2DFA, which is a DFA that can move its head to the
--- left or right on the input list. We can extend the DFA structure
--- to include the tape head position, and the transition function
--- can be modified to move the head left or right based on the input.
--- It has been shown that 2DFAs are equivalent to DFAs, so as a final
--- extension, we can try to prove this equivalence in Lean 4.
--- namespace TwoWayDFA_Impl
--- -- Define a 2DFA as a structure with six fields:
--- -- Q, Σ, δ, q0, F, and head.
--- -- Q - Finite, nonempty set of states
--- -- A - Finite, nonempty set of alphabet symbols
--- -- δ : Q × Σ → Q × {L, R} - Transition function
--- -- q₀ ∈ Q - Start state
--- -- F ⊆ Q - Set of accepting states
--- -- head ∈ Z - Tape head position
--- inductive Direction where
---   | L
---   | R
-
--- tructure DFA (α : Type u) (σ : Type v) :=
--- (step : σ → α → σ)
--- (start : σ)
--- (accept : set σ)
-
--- structure TwoWayDFA
---   (Q : Type) [DecidableEq Q] [Nonempty Q]
---   (A : Type) [Nonempty A] where
---   states : Finset Q
---   sigma : Finset A
---   delta : Q → A → Q × Direction
---   q₀ : Q
---   F : Finset Q
---   head : Int -- index of the tape head
-
--- -- Constructs a 2DFA from the given parameters.
--- def TwoWayDFA.mk2DFA {Q} [DecidableEq Q] [Nonempty Q]
---           {A} [Nonempty A]
---           (states: Finset Q)
---           (sigma: Finset A)
---           (delta: Q → A → Q × Direction)
---           (q₀: Q)
---           (F: Finset Q)
---           (head: Int) : TwoWayDFA Q A :=
---     { states := states
---     , sigma := sigma
---     , delta := delta
---     , q₀ := q₀
---     , F := F
---     , head := head }
-
--- -- Given a 2DFA and an input string, this function
--- -- returns the final state after processing the input.
--- -- The input string is represented as a list of symbols.
--- structure Configuration (Q : Type) where
---   state : Q
---   head : Int
---   deriving DecidableEq
-
--- -- theorem get_index_spec {α} (as : List α) (i : Nat) :
--- --   as.get? i = Option.map (λ h => as.get ⟨i, h⟩) (Nat.decLt i as.length) := by
--- --   cases Nat.decLt i as.length with
--- --   | isFalse h => simp [List.get?, h]
--- --   | isTrue h => simp [List.get?, h]
-
--- /-- Get a symbol from the input tape at a given position.
---     Returns None if the position is out of bounds. -/
--- def getInputSymbol {A} (input : List A) (pos : Int) : Option A :=
---   if h : 0 ≤ pos ∧ pos < input.length then
---     -- Convert Int position to Nat for list access
---     have h_nat : pos.toNat < input.length := by
---       cases pos with
---       | ofNat n => simp [Int.toNat] at *; exact h.2
---       | negSucc n => simp [Int.toNat] at *
---     some (input.get ⟨pos.toNat, h_nat⟩)
---   else
---     none
-
--- def TwoWayDFA.step {Q} [DecidableEq Q] [Nonempty Q]
---            {A} [Nonempty A]
---            (dfa: TwoWayDFA Q A)
---            (input: List A)
---            (config: Configuration Q) : Option (Configuration Q) :=
---   match getInputSymbol input config.head with
---   | none => none  -- Head has moved out of bounds
---   | some symbol =>
---       let (newState, dir) := dfa.delta config.state symbol
---       let newHead := config.head + match dir with
---                                  | Direction.L => -1
---                                  | Direction.R => 1
---       some ⟨newState, newHead⟩
-
--- def TwoWayDFA.run2DFA {Q} [DecidableEq Q] [Nonempty Q]
---            {A} [Nonempty A]
---            (dfa: TwoWayDFA Q A)
---            (input: List A) : Q :=
---   let initialConfig := ⟨dfa.q₀, dfa.head⟩
---   let rec run (config: Configuration Q) (fuel: Nat) : Q :=
---     match fuel, dfa.step input config with
---     | 0, _ => config.state  -- Out of fuel, return current state
---     | fuel'+1, none => config.state  -- Invalid move, return current state
---     | fuel'+1, some nextConfig =>
---         -- Continue only if we haven't seen this configuration before
---         if nextConfig.head < 0 ∨ nextConfig.head ≥ input.length
---         then config.state  -- Return current state if head moves out of bounds
---         else run nextConfig fuel'
-
---   -- This is a conservative bound as we might visit each position in each state
---   -- num_states is a parameter
---   run initialConfig (input.length * input.length)
-
--- def TwoWayDFA.accepts {Q} [DecidableEq Q] [Nonempty Q]
---                     {A} [Nonempty A]
---                     (dfa : TwoWayDFA Q A)
---                     (input : List A) : Bool := by
---   let finalState := TwoWayDFA.run2DFA dfa input dfa.states.card
---   finalState ∈ dfa.F
-
-
-
-
--- end TwoWayDFA_Impl
--- open DFA_Impl
--- open TwoWayDFA_Impl
--- theorem dfa_to_2dfa_equivalence {Q} [DecidableEq Q] [Nonempty Q]
---                              {A} [Nonempty A]
---                              (dfa : DFA Q A)
---                              (input : List A) :
---   DFA.accepts dfa input = TwoWayDFA.accepts (DFA_to_2DFA dfa) input := by
--- begin
---   -- Prove that the DFA and the constructed 2DFA accept the same input strings
---   induction input with
---   | nil =>
---     -- Base case: empty input
---     simp [DFA.accepts, DFA.runDFA, TwoWayDFA.accepts, TwoWayDFA.run2DFA, DFA_to_2DFA]
---     rfl
---   | cons a input ih =>
---     -- Inductive case: non-empty input
---     simp [DFA.accepts, DFA.runDFA, TwoWayDFA.accepts, TwoWayDFA.run2DFA, DFA_to_2DFA]
---     rw [ih]
---     simp [DFA_to_2DFA, TwoWayDFA.step]
---     -- Show that the DFA and 2DFA state transitions are the same
---     have state_eq : DFA.runDFA dfa input = TwoWayDFA.run2DFA (DFA_to_2DFA dfa) input := by
---       rw [DFA.runDFA, TwoWayDFA.run2DFA, DFA_to_2DFA]
---       induction input with
---       | nil => simp
---       | cons b input' ih =>
---         simp [DFA.runDFA, TwoWayDFA.run2DFA, DFA_to_2DFA]
---         rw [ih]
---         simp [DFA_to_2DFA, TwoWayDFA.step]
---     rw [state_eq]
---     -- Show that the final states are in the accepting set iff
---     -- the original DFA and the constructed 2DFA both accept
---     cases mem_of_eq_of_mem (DFA.runDFA dfa input) (TwoWayDFA.run2DFA (DFA_to_2DFA dfa) input) dfa.F with
---     | inl h => exact h
---     | inr h => exact h
--- end
+end TwoWayDFA
