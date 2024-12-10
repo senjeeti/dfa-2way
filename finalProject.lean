@@ -224,7 +224,17 @@ def TwoWayDFA.run {Q} [DecidableEq Q] [Nonempty Q]
     ((Sum.inr true) :: (input.map Sum.inl) ++ [Sum.inr false])
     0
 
-  sorry
+   let rec run_helper (config : Configuration Q A) (steps : Nat) : Option Q :=
+    if steps = 0 then
+      some config.state
+    else if config.state = dfa.qaccept ∨ config.state = dfa.qreject then
+      some config.state
+    else
+      match dfa.step config with
+      | none => none  -- Invalid configuration
+      | some next_config => run_helper next_config (steps - 1)
+
+  run_helper init_config n
 
 -- A 2-way DFA accepts if it reaches the accepting state
 def TwoWayDFA.accepts {Q} [DecidableEq Q] [Nonempty Q]
