@@ -6,6 +6,7 @@
 
 import Mathlib.Data.Finset.Basic
 
+
 namespace DFA_Impl
 -- Define a DFA  as a structure with five
 -- fields: Q, Σ, δ, q0, and F.
@@ -153,7 +154,6 @@ structure TwoWayDFA
   qaccept : Q
   qreject : Q
 
-def isHaltState_dec {}
 
 -- Define when a transition function is valid:
 -- 1. Must move right on left endmarker
@@ -225,23 +225,34 @@ def TwoWayDFA.run {Q} [DecidableEq Q] [Nonempty Q]
     dfa.q₀
     ((Sum.inr true) :: (input.map Sum.inl) ++ [Sum.inr false])
     0
-  match Nat.iterate n (λ c => c.bind (dfa.step)) (some init_config) with
-  | none => none
-  | some config => some config.state
+  sorry
 
 -- A 2-way DFA accepts if it reaches the accepting state
 def TwoWayDFA.accepts {Q} [DecidableEq Q] [Nonempty Q]
                       {A} [Nonempty A]
                       (dfa : TwoWayDFA Q A)
-                      (input : List A) : Bool :=
-  ∃ n, (dfa.run input n) = some dfa.qaccept
+                      (input : List A)
+                      (qaccept : Q) (qreject : Q): Bool :=
+  -- A configuration is accepting if we reach accept state within bounds
+  -- Run until we either accept or detect a loop
+  -- NOTE: temporary number inserted in place of # of total states for the sake of termination
+  let max_steps := input.length * 100000000
+  let rec try_steps (n : Nat) (seen : Finset (Q) ) (left : ℕ): Bool :=
+    -- Get the state after n steps
+    let (state_option) := dfa.run input n
+    -- If we've reached either terminal state, return the result
+    match state_option with
+    | some state => if state ∈ seen then false else
+                    if left = 0 then false else
+                    if state = qaccept then true
+                    else if state = qreject then false
+                    else try_steps (n + 1) (insert state seen) (left - 1)
+    | none => false
 
--- A 2-way DFA rejects if it reaches the rejecting state
-def TwoWayDFA.rejects {Q} [DecidableEq Q] [Nonempty Q]
-                      {A} [Nonempty A]
-                      (dfa : TwoWayDFA Q A)
-                      (input : List A) : Bool :=
-  ∃ n, (dfa.run input n) = some dfa.qreject
+  -- Start trying from 0 steps
+  try_steps 0 ∅ max_steps
+
+
 
 end TwoWayDFA_Impl
 
