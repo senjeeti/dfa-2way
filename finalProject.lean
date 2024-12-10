@@ -81,14 +81,14 @@ theorem evenZeroDFA_correct (input: List Nat) :
   induction input with
   | nil =>
     dsimp [DFA.accepts, DFA.runDFA, evenZeroDFA]
-    simp [List.count, Nat.mod_zero]  -- `List.count 0 [] = 0`
+    simp [List.count, Nat.mod_zero]
     trivial
   | cons a input ih =>
     cases Nat.decEq a 0 with
-    | isTrue h =>  -- case where a = 0
+    | isTrue h =>
 
-      rw [h]  -- substitute a with 0
-      rw [List.count_cons]  -- expand List.count for (0 :: input)
+      rw [h]
+      rw [List.count_cons]
       have even_flip : ∀ n, (n + 1) % 2 = 0 ↔ n % 2 ≠ 0 := by
         intro n
         simp [Nat.add_mod, Nat.mod_eq_of_lt]
@@ -97,22 +97,22 @@ theorem evenZeroDFA_correct (input: List Nat) :
         | inr h => simp [h]
       simp
       rw [even_flip]
-      rw [DFA.accepts, DFA.runDFA] -- Expand DFA behavior
+      rw [DFA.accepts, DFA.runDFA]
       rw [List.foldl_cons]
       simp [List.count_cons]
       sorry
     | isFalse h =>  -- case where a ≠ 0
-      rw [List.count_cons]  -- expand `count 0 (a :: input')`
-      simp [Nat.add_mod]    -- simplify modular arithmetic
+      rw [List.count_cons]
+      simp [Nat.add_mod]
       simp
-      rw [if_neg h]  -- Simplify the if-then-else since we know a ≠ 0
-      simp [Nat.add_zero, Nat.mod_eq_of_lt]  -- Simplify addition with zero and modulo
+      rw [if_neg h]
+      simp [Nat.add_zero, Nat.mod_eq_of_lt]
       have step1 : evenZeroDFA.accepts (a :: input) = evenZeroDFA.accepts input := by {
         rw [DFA.accepts]
         have state_preservation : ∀ (s : String),
           DFA.runDFA evenZeroDFA (a :: input) = DFA.runDFA evenZeroDFA (input) := by {
-          rw [DFA.runDFA]  -- Expand the DFA execution
-          simp [evenZeroDFA, if_neg h]  -- Simplify using a ≠ 0
+          rw [DFA.runDFA]
+          simp [evenZeroDFA, if_neg h]
           rw [DFA.runDFA, evenZeroDFA] at *
           simp [if_neg h] at *
           sorry
@@ -125,13 +125,11 @@ end DFA_Impl
 
 namespace TwoWayDFA_Impl
 
--- First define the direction the head can move
 inductive Direction where
   | Left : Direction
   | Right : Direction
 deriving DecidableEq
 
--- For a given alphabet A, we extend it with endmarkers
 def TapeAlphabet (A : Type) := A ⊕ Bool
 -- Left endmarker is (Sum.inr true)
 -- Right endmarker is (Sum.inr false)
@@ -225,6 +223,7 @@ def TwoWayDFA.run {Q} [DecidableEq Q] [Nonempty Q]
     dfa.q₀
     ((Sum.inr true) :: (input.map Sum.inl) ++ [Sum.inr false])
     0
+
   sorry
 
 -- A 2-way DFA accepts if it reaches the accepting state
@@ -254,27 +253,27 @@ def TwoWayDFA.accepts {Q} [DecidableEq Q] [Nonempty Q]
 
 def evenZeroTwoWayDFA {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A] : TwoWayDFA String Nat :=
   TwoWayDFA.mkTwoWayDFA
-    -- States: we need q0 (even zeros), q1 (odd zeros), plus accept/reject states
+
     (Multiset.toFinset ["q0", "q1", "qaccept", "qreject"])
-    -- Alphabet: still just 0 and 1
+
     (Multiset.toFinset [0,1])
-    -- Delta function is more complex now - needs to handle endmarkers
+
     (λ q a =>
       match q, a with
-      -- Handle left endmarker (Sum.inr true)
+
       | q, Sum.inr true => ("q0", Direction.Right)  -- Always move right on left endmarker
 
-      -- Handle right endmarker (Sum.inr false)
+
       | "q0", Sum.inr false => ("qaccept", Direction.Left)  -- Even zeros - accept
       | "q1", Sum.inr false => ("qreject", Direction.Left)  -- Odd zeros - reject
 
-      -- Handle regular symbols (Sum.inl a)
+
       | "q0", Sum.inl 0 => ("q1", Direction.Right)  -- Even to odd
       | "q0", Sum.inl 1 => ("q0", Direction.Right)  -- Stay even
       | "q1", Sum.inl 0 => ("q0", Direction.Right)  -- Odd to even
       | "q1", Sum.inl 1 => ("q1", Direction.Right)  -- Stay odd
 
-      -- Accept/reject states always move right on non-endmarker symbols
+
       | "qaccept", _ => ("qaccept", Direction.Right)
       | "qreject", _ => ("qreject", Direction.Right)
 
@@ -286,26 +285,20 @@ def evenZeroTwoWayDFA {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A] : TwoWayDF
     "qaccept"
     -- Reject state
     "qreject"
-    -- Proof that transitions are valid (would need to be filled in)
+
     (λ q a => by
-      -- First, unfold the definition of ValidTransition
       unfold ValidTransition
 
-      -- Case analysis on the input symbol a
       cases a with
       | inr b =>
-        -- Handle endmarker cases
         cases b with
         | true =>
-          -- Left endmarker case: must move right
           simp [Direction.Right]
         | false =>
-          -- Right endmarker case: must move left
           simp [Direction.Left]
           sorry
       | inl x =>
-        -- Handle regular symbols
-        -- If we're in accept or reject state, must move right
+
         by_cases h : q = "qaccept" ∨ q = "qreject"
         . simp [h, Direction.Right]
           match q with
@@ -325,7 +318,6 @@ theorem evenZeroTwoWayDFA_correct :
 
   intro input
 
-  -- We'll proceed by induction on the length of the input
   induction input with
   | nil =>
     -- Base case: empty list
@@ -334,12 +326,10 @@ theorem evenZeroTwoWayDFA_correct :
     sorry
 
   | cons head tail ih =>
-    -- Inductive case: head :: tail
-    -- We need to show that adding one element preserves correctness
-    -- Split into cases based on whether head is 0
+
     by_cases h : head = 0
 
-    . -- Case: head is 0
+    .
       rw [h]
       simp [List.count]
       -- Adding a zero flips the parity
@@ -362,20 +352,13 @@ theorem evenZeroTwoWayDFA_correct :
             simp
             sorry
 
-      -- Use the inductive hypothesis
-      -- Show that the DFA's state transitions match this parity change
+
       sorry
 
-    . -- Case: head is not 0
-      -- Count of zeros doesn't change
+    .
       simp [List.count, h]
 
-      -- Use the inductive hypothesis
-
-
-      -- Show that the DFA's state transitions preserve the count
       sorry
-  -- Finally, show that the DFA's acceptance matches the parity
 
 
 
@@ -392,21 +375,17 @@ deriving DecidableEq
 /- Helper function to convert a 2-way DFA into a DFA -/
 def twoway_to_dfa {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A]
                  (twoway: TwoWayDFA Q A) : DFA Q A :=
-  -- Create state space that tracks:
-  -- 1. Current state
-  -- 2. Head position (bounded by input length + 2 for endmarkers)
-  -- 3. Direction of last move
+
   let states' := twoway.states
   let sigma' := twoway.sigma
   let delta' := (λ q a =>
-      -- First handle the initial state with left endmarker
+
       let (after_left, _) := twoway.delta q (Sum.inr true)
-      -- Then process the current symbol
+
       let (next_state, _) := twoway.delta after_left (Sum.inl a)
-      -- Finally check if we'd reach accept/reject on right endmarker
+
       let (final_state, _) := twoway.delta next_state (Sum.inr false)
 
-      -- Our next state is determined by the final outcome
       if final_state = twoway.qaccept then twoway.qaccept
       else if final_state = twoway.qreject then twoway.qreject
       else next_state)
@@ -416,11 +395,10 @@ def twoway_to_dfa {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A]
 
 
 
-theorem twoway_to_dfa_preserves_regular_language {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A] (twoway: TwoWayDFA Q A) :
+theorem twoway_to_dfa_accept {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A] (twoway: TwoWayDFA Q A) :
   ∀ (input : List A),
-    -- If the 2-way DFA recognizes a regular language
     -- (which means it can be done in a single left-to-right pass)
-    DFA.accepts (twoway_to_dfa twoway) input =
+    DFA.accepts (twoway_to_dfa twoway) input ↔
     TwoWayDFA.accepts twoway input twoway.qaccept twoway.qreject := by
 
   let dfa := twoway_to_dfa twoway
@@ -445,7 +423,6 @@ theorem twoway_to_dfa_preserves_regular_language {Q A} [DecidableEq Q] [Nonempty
       simp [DFA.runDFA, TwoWayDFA.run]
       -- Both machines start at their initial states
       have h_start : dfa.q₀ = twoway.q₀ := by rfl
-      -- Show they process endmarkers the same way
 
       rw [h_start]
       let left_trans := twoway.delta twoway.q₀ (Sum.inr true)
