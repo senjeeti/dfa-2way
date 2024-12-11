@@ -97,9 +97,8 @@ theorem evenZeroDFA_correct (input: List Nat) :
         | inr h => simp [h]
       simp
       rw [even_flip]
-      rw [DFA.accepts, DFA.runDFA]
-      rw [List.foldl_cons]
-      simp [List.count_cons]
+      dsimp
+
       sorry
     | isFalse h =>  -- case where a ≠ 0
       rw [List.count_cons]
@@ -115,6 +114,7 @@ theorem evenZeroDFA_correct (input: List Nat) :
           simp [evenZeroDFA, if_neg h]
           rw [DFA.runDFA, evenZeroDFA] at *
           simp [if_neg h] at *
+
           sorry
         }
         rw [state_preservation "q0"]
@@ -198,12 +198,12 @@ structure Configuration (Q A : Type) where
 def TwoWayDFA.step {Q} [DecidableEq Q] [Nonempty Q]
                    {A} [Nonempty A]
                    (dfa : TwoWayDFA Q A)
-                   (config : Configuration Q A) : Option (Configuration Q A) :=
+                   (config : Configuration Q A) : (Configuration Q A) :=
   match config.input.get? config.position with
-  | none => none  -- Invalid position
+  | none => config -- Invalid position -- NEED TO FIX
   | some symbol =>
       let (next_state, dir) := dfa.delta config.state symbol
-      some ⟨next_state,
+      ⟨next_state,
             config.input,
             match dir with
             | Direction.Left =>
@@ -218,21 +218,22 @@ def TwoWayDFA.run {Q} [DecidableEq Q] [Nonempty Q]
                   {A} [Nonempty A]
                   (dfa : TwoWayDFA Q A)
                   (input : List A)
-                  (n : Nat) : Option Q :=
+                  (n : Nat) : Q :=
   let init_config := Configuration.mk
     dfa.q₀
     ((Sum.inr true) :: (input.map Sum.inl) ++ [Sum.inr false])
     0
 
-   let rec run_helper (config : Configuration Q A) (steps : Nat) : Option Q :=
+   let rec run_helper (config : Configuration Q A) (steps : Nat) : Q :=
     if steps = 0 then
-      some config.state
+      config.state
     else if config.state = dfa.qaccept ∨ config.state = dfa.qreject then
-      some config.state
+      config.state
     else
-      match dfa.step config with
-      | none => none  -- Invalid configuration
-      | some next_config => run_helper next_config (steps - 1)
+      run_helper (dfa.step config) (steps - 1)
+      -- match dfa.step config with
+      -- | none => none  -- Invalid configuration
+      -- | some next_config =>
 
   run_helper init_config n
 
@@ -248,15 +249,13 @@ def TwoWayDFA.accepts {Q} [DecidableEq Q] [Nonempty Q]
   let max_steps := input.length * 100000000
   let rec try_steps (n : Nat) (seen : Finset (Q) ) (left : ℕ): Bool :=
     -- Get the state after n steps
-    let (state_option) := dfa.run input n
+    let (state) := dfa.run input n
     -- If we've reached either terminal state, return the result
-    match state_option with
-    | some state => if state ∈ seen then false else
-                    if left = 0 then false else
-                    if state = qaccept then true
-                    else if state = qreject then false
-                    else try_steps (n + 1) (insert state seen) (left - 1)
-    | none => false
+    if state ∈ seen then false else
+                      if left = 0 then false else
+                      if state = qaccept then true
+                      else if state = qreject then false
+                      else try_steps (n + 1) (insert state seen) (left - 1)
 
   -- Start trying from 0 steps
   try_steps 0 ∅ max_steps
@@ -316,8 +315,8 @@ def evenZeroTwoWayDFA {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A] : TwoWayDF
           | "qreject" => simp [h]
           | _ =>
             cases h with
-            | inl hq => sorry  -- Because q isn't qaccept
-            | inr hq => sorry
+            | inl hq => simp [*]  -- Because q isn't qaccept
+            | inr hq => simp [*]
         . simp [h]
         )
 
@@ -376,6 +375,7 @@ end TwoWayDFA_Impl
 
 open DFA_Impl TwoWayDFA_Impl
 
+-- For use in the DFA => TwoWayDFA direction
 inductive AugmentedState (Q : Type)
 | Original : Q → AugmentedState Q
 | Accept : AugmentedState Q
@@ -438,19 +438,28 @@ theorem twoway_to_dfa_accept {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A] (tw
       let left_trans := twoway.delta twoway.q₀ (Sum.inr true)
       let right_trans := twoway.delta left_trans.1 (Sum.inr false)
       if h : right_trans.1 = twoway.qaccept then
-
-        sorry
+        rw [TwoWayDFA.run.run_helper, ← h]
+        simp
       else if h : right_trans.1 = twoway.qreject then
-        sorry
+        rw [TwoWayDFA.run.run_helper, ← h]
+        simp
       else
         have h_running : right_trans.1 ≠ twoway.qaccept ∧ right_trans.1 ≠ twoway.qreject := ⟨by assumption, by assumption⟩
-        sorry
+        rw [TwoWayDFA.run.run_helper]
+        -- Use h_running to show it continues
+        cases right_trans.2
+        -- Handle each direction separately
+        · -- Left case
+          simp
+        · -- Right case
+          simp
     | cons head tail ih =>
       -- Inductive case: head :: tail
       simp [DFA.runDFA, TwoWayDFA.run]
       -- Show that processing one more symbol preserves equivalence
       -- Use the inductive hypothesis ih
       have h_tail := ih
+
       simp [DFA.runDFA, TwoWayDFA.run] at h_tail
 
       sorry
@@ -463,93 +472,38 @@ theorem twoway_to_dfa_accept {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A] (tw
     rw [h]
 
     -- The DFA's accepting states are exactly twoway.qaccept
-    sorry
+    have h_F : dfa.F = {twoway.qaccept} := by rfl
+    rw [h_F]
+    simp
 
   -- Combine the lemmas to prove equivalence
-  sorry
+  simp
+  rw [DFA.accepts]
+  rw [TwoWayDFA.accepts]
+  rw [h_final_state]
+  simp
+
+  -- Goal is to show equivalence without using constructor
+  have h_decide : decide (twoway.run input input.length ∈ (twoway_to_dfa twoway).F) =
+    TwoWayDFA.accepts.try_steps twoway input twoway.qaccept twoway.qreject 0 ∅ (input.length * 100000000) := by
+
+    -- Show the decision procedures match
+    simp [TwoWayDFA.accepts, twoway_to_dfa]
+
+    -- Use h_final_state to connect the runs
+    rw [← h_final_state]
+
+    -- Apply h_accept_equiv to show accepting states correspond
+    simp [*]
+    sorry
+
+  -- Use h_decide to complete the equivalence
+  exact h_decide
+
+
 
 
 -- /- Helper function to convert a DFA into a 2-way DFA -/
 -- def dfa_to_2dfa {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A]
 --                 (dfa: DFA Q A) : TwoWayDFA Q A :=
 --   -- Convert DFA states and add accept/reject states
---   let qaccept := AugmentedState dfa.accepts
---   let states' := insert qaccept dfa.states
---   -- Create transition function that always moves right and simulates DFA
---   let delta' (q: Q) (a: TapeAlphabet A) : Q × Direction :=
---     match a with
---     | Sum.inr true => (dfa.q₀, Direction.Right)  -- Left endmarker: move right to start
---     | Sum.inr false =>  -- Right endmarker: accept if in accepting state
---         if q ∈ dfa.F
---         then ("qaccept", Direction.Left)
---         else ("qreject", Direction.Left)
---     | Sum.inl sym =>  -- Regular symbol: simulate DFA transition
---         (dfa.delta q sym, Direction.Right)
-
---   TwoWayDFA.mkTwoWayDFA
---     states'
---     dfa.sigma
---     delta'
---     dfa.q₀
---     "qaccept"
---     "qreject"
---     (by
---       -- Prove transition function validity
---       intro q a
---       unfold ValidTransition
---       cases a with
---       | inr b =>
---         cases b with
---         | true => simp [Direction.Right]  -- Left endmarker moves right
---         | false => simp [Direction.Left]  -- Right endmarker moves left
---       | inl x =>
---         by_cases h : q = "qaccept" ∨ q = "qreject"
---         . simp [h, Direction.Right]
---         . simp [h])
-
-
--- /- Main equivalence theorem -/
--- theorem dfa_2dfa_equiv {Q A} [DecidableEq Q] [Nonempty Q] [Nonempty A] :
---   ∀ (L : Set (List A)),
---   (∃ dfa: DFA Q A, ∀ w, w ∈ L ↔ dfa.accepts w) ↔
---   (∃ twoway: TwoWayDFA Q A, ∀ w, w ∈ L ↔
---     TwoWayDFA.accepts twoway w twoway.qaccept twoway.qreject) := by
-
---   intro L
---   constructor
-
---   -- Forward direction: DFA → 2-way DFA
---   { intro h
---     rcases h with ⟨dfa, h⟩
---     -- Convert DFA to 2-way DFA using our helper function
---     let twoway := dfa_to_2dfa dfa
---     existsi twoway
-
---     -- Show that the languages recognized are equivalent
---     intro w
---     -- Main argument: 2-way DFA simulates DFA by moving right
---     have sim_step : ∀ (pos : Nat) (state : Q),
---       pos ≤ w.length →
---       -- Each step of 2-way DFA matches DFA state
---       sorry
-
---     -- Use simulation to prove equivalence
---     sorry }
-
---   -- Reverse direction: 2-way DFA → DFA
---   { intro h
---     rcases h with ⟨twoway, h⟩
---     -- Convert 2-way DFA to DFA using helper function
---     let dfa := twoway_to_dfa twoway
---     existsi dfa
-
---     -- Show languages are equivalent
---     intro w
---     -- Main argument: DFA can track all possible configurations
---     have config_bound : ∀ (steps : Nat),
---       steps ≤ w.length * twoway.states.card →
---       -- DFA state encodes valid 2-way DFA configuration
---       sorry
-
---     -- Use configuration tracking to prove equivalence
---     sorry }
